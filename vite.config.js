@@ -3,9 +3,6 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
-  server: {
-    allowedHosts: [".vercel.run", "sb-6htz7hsmtytz.vercel.run"],
-  },
   build: {
     rollupOptions: {
       output: {
