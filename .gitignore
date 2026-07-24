@@ -1,0 +1,17 @@
+# Environment variables — never commit real secrets/keys
+.env
+.env.local
+.env.*.local
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+
+# Editor/OS cruft
+.DS_Store
+*.local
+.vscode/*
+!.vscode/extensions.json
