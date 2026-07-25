@@ -13,6 +13,18 @@ import Footer from "../components/Footer";
 import ToastStack from "../components/ToastStack";
 import { useToasts } from "../hooks/useToasts";
 import logo from "../assets/images/logo.png";
+import occAlumniLogo from "../assets/images/occ-alumni-logo.png";
+
+// Falls back to initials (e.g. "Juan Dela Cruz" -> "JD") when the signed-in
+// user has no profile photo, mirroring the avatar chip in the header.
+const initialsOf = (name = "") =>
+  name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase() || "?";
 
 const DOT_STYLES = [
   { val: "dots", label: "Dots" },
@@ -37,7 +49,7 @@ const QR_TYPES = [
 ];
 
 const DEFAULT_FIELDS = {
-  url: { url: "https://example.com" },
+  url: { url: "https://occ-alumni.online" },
   text: { text: "Hello world!" },
   wifi: { ssid: "", password: "", enc: "WPA", hidden: false },
   email: { to: "", subject: "", body: "" },
@@ -52,15 +64,15 @@ const DEFAULT_FIELDS = {
 const DEFAULT_STATE = {
   qrType: "url",
   fields: DEFAULT_FIELDS,
-  title: "QR Code Builder",
-  subtitle: "example.com",
+  title: "ATMS - Opol Community College",
+  subtitle: "occ-alumni.online",
   dotType: "dots",
   dotColor: "#0e214a",
   bgColor: "#ffffff",
   cornerColor: "#0e214a",
   cornerDotColor: "#0e214a",
   cardBg: "#ffffff",
-  logo: null,
+  logo: occAlumniLogo,
 };
 
 // Escapes characters that are special inside WIFI:/VCARD-style payloads.
@@ -172,6 +184,8 @@ export default function BuilderPage() {
   const [scrolled, setScrolled] = useState(false);
   const [panelTab, setPanelTab] = useState("design"); // "design" | "presets"
   const { toasts, push: pushToast } = useToasts();
+  const topbarRef = useRef(null);
+  const [topbarH, setTopbarH] = useState(72);
 
   useEffect(() => {
     document.title = "QR Code Builder";
@@ -184,6 +198,24 @@ export default function BuilderPage() {
     onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // The header is truly fixed (not just sticky) so it can never be scrolled
+  // out of view or shifted by any ancestor. Since fixed elements leave the
+  // document flow, measure its real height and push the page content down
+  // by that amount, keeping the offset correct across screen sizes / notches.
+  useEffect(() => {
+    const el = topbarRef.current;
+    if (!el) return;
+    const update = () => setTopbarH(el.offsetHeight);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    window.addEventListener("resize", update);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", update);
+    };
   }, []);
 
   // Load this user's saved presets on mount / when user changes.
@@ -570,7 +602,7 @@ export default function BuilderPage() {
       <style>{styles}</style>
       <ToastStack toasts={toasts} />
 
-      <div className={"topbar" + (scrolled ? " is-scrolled" : "")}>
+      <div ref={topbarRef} className={"topbar" + (scrolled ? " is-scrolled" : "")}>
         <div className="brand">
           <img className="brand-mark" src={logo} alt="" />
           <div className="brand-name">QR Code Builder</div>
@@ -579,14 +611,26 @@ export default function BuilderPage() {
           <button className="icon-btn" onClick={resetToDefaults} title="Reset to defaults">
             <RotateCcw size={15} />
           </button>
-          {user?.picture && <img src={user.picture} alt="" className="user-avatar" />}
-          <span className="user-name">{user?.name || "Signed in"}</span>
+          {user?.picture ? (
+            <img
+              src={user.picture}
+              alt=""
+              className="user-avatar"
+              referrerPolicy="no-referrer"
+              title={user?.name || "Signed in"}
+            />
+          ) : (
+            <span className="user-avatar user-avatar-fallback" title={user?.name || "Signed in"}>
+              {initialsOf(user?.name)}
+            </span>
+          )}
           <button className="icon-btn" onClick={handleLogout} title="Sign out">
             <LogOut size={15} />
           </button>
         </div>
       </div>
 
+      <div className="page-content" style={{ paddingTop: topbarH }}>
       <div className="layout">
         <div className="panel">
           <div className="section-title">QR code type</div>
@@ -798,16 +842,19 @@ export default function BuilderPage() {
       </button>
 
       <Footer />
+      </div>
     </>
   );
 }
 
 const styles = `
-  /* Top bar stays pinned in place while the rest of the page scrolls,
-     on desktop as well as iOS / Android mobile browsers. */
+  /* Top bar is truly fixed — not sticky — so it can never be scrolled out
+     of view, disappear, or drift, regardless of what's happening in the
+     content below. The page content is offset by its measured height
+     (see topbarH / .page-content) so nothing renders underneath it. */
   .topbar{
-    position: sticky;
-    top: 0;
+    position: fixed;
+    top: 0; left: 0; right: 0;
     z-index: 60;
     display:flex; align-items:center; justify-content:space-between;
     gap: 12px;
@@ -824,6 +871,7 @@ const styles = `
     border-bottom-color: var(--border);
     box-shadow: 0 8px 24px rgba(0,0,0,.35);
   }
+  .page-content{ min-width:0; }
   .brand{ display:flex; align-items:center; gap:12px; min-width:0; }
   .brand-mark{
     width:32px; height:32px; border-radius:9px; flex-shrink:0;
@@ -832,8 +880,18 @@ const styles = `
   }
   .brand-name{ font-weight:700; font-size:16px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .user-chip{ display:flex; align-items:center; gap:10px; font-size:13px; color:var(--text-muted); min-width:0; }
-  .user-name{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:34vw; }
-  .user-avatar{ width:26px; height:26px; border-radius:50%; flex-shrink:0; }
+  .user-avatar{
+    width:28px; height:28px; border-radius:50%; flex-shrink:0;
+    object-fit: cover;
+    border: 1px solid var(--border-strong);
+  }
+  .user-avatar-fallback{
+    display:flex; align-items:center; justify-content:center;
+    background: var(--surface-2); color: var(--accent);
+    font-size:11px; font-weight:700; letter-spacing:.02em;
+    font-family:'JetBrains Mono', monospace;
+    cursor: default;
+  }
   .icon-btn{
     background:var(--surface-2); border:1px solid var(--border); color:var(--text-muted);
     border-radius:8px; padding:6px; cursor:pointer; display:flex; flex-shrink:0;
