@@ -13,7 +13,6 @@ import Footer from "../components/Footer";
 import ToastStack from "../components/ToastStack";
 import { useToasts } from "../hooks/useToasts";
 import logo from "../assets/images/logo.png";
-import occAlumniLogo from "../assets/images/occ-alumni-logo.png";
 
 // Falls back to initials (e.g. "Juan Dela Cruz" -> "JD") when the signed-in
 // user has no profile photo, mirroring the avatar chip in the header.
@@ -49,7 +48,7 @@ const QR_TYPES = [
 ];
 
 const DEFAULT_FIELDS = {
-  url: { url: "https://occ-alumni.online" },
+  url: { url: "https://example.com" },
   text: { text: "Hello world!" },
   wifi: { ssid: "", password: "", enc: "WPA", hidden: false },
   email: { to: "", subject: "", body: "" },
@@ -64,15 +63,15 @@ const DEFAULT_FIELDS = {
 const DEFAULT_STATE = {
   qrType: "url",
   fields: DEFAULT_FIELDS,
-  title: "ATMS - Opol Community College",
-  subtitle: "occ-alumni.online",
+  title: "Example Title",
+  subtitle: "Example Subtitle",
   dotType: "dots",
   dotColor: "#0e214a",
   bgColor: "#ffffff",
   cornerColor: "#0e214a",
   cornerDotColor: "#0e214a",
   cardBg: "#ffffff",
-  logo: occAlumniLogo,
+  logo: null,
 };
 
 // Escapes characters that are special inside WIFI:/VCARD-style payloads.
