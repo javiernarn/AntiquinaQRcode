@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import QRCodeStyling from "qr-code-styling";
+import qrcodegen from "qrcode-generator";
 import { useNavigate } from "react-router-dom";
 import {
   LogOut, Download, Save, Trash2, ChevronDown,
@@ -165,6 +166,29 @@ function contrastRatio(hexA, hexB) {
   return (light + 0.05) / (dark + 0.05);
 }
 
+// Short payloads (like a bare URL) naturally produce a low-version QR code
+// with very few, very large modules — at the "dots" dot-style that reads as
+// big blobby circles crowded on top of each other instead of the airy,
+// well-spaced dot grid we want. Forcing a minimum type/version (module
+// count) keeps the dots small and clearly separated regardless of how
+// short the encoded data is, while still growing automatically for longer
+// data that needs more room.
+const MIN_QR_TYPE_NUMBER = 6; // 6 -> 41x41 modules, matches the reference dot spacing/density
+
+function computeTypeNumber(data, ecLevel = "H", floor = MIN_QR_TYPE_NUMBER) {
+  try {
+    const probe = qrcodegen(0, ecLevel);
+    probe.addData(data || " ");
+    probe.make();
+    const modules = probe.getModuleCount();
+    const required = Math.round((modules - 17) / 4);
+    return Math.max(floor, required);
+  } catch {
+    return floor;
+  }
+}
+
+
 export default function BuilderPage() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
@@ -240,12 +264,15 @@ export default function BuilderPage() {
   // Init QR renderer once.
   useEffect(() => {
     qrRef.current = new QRCodeStyling({
-      width: 340,
-      height: 340,
+      width: 800,
+      height: 800,
       type: "canvas",
       data: qrData || " ",
-      margin: 8,
-      qrOptions: { errorCorrectionLevel: "H" },
+      margin: 20,
+      qrOptions: {
+        errorCorrectionLevel: "H",
+        typeNumber: computeTypeNumber(qrData),
+      },
       dotsOptions: { color: state.dotColor, type: state.dotType },
       backgroundOptions: { color: state.bgColor },
       cornersSquareOptions: { color: state.cornerColor, type: "extra-rounded" },
@@ -270,6 +297,10 @@ export default function BuilderPage() {
     if (!qrRef.current) return;
     qrRef.current.update({
       data: qrData || " ",
+      qrOptions: {
+        errorCorrectionLevel: "H",
+        typeNumber: computeTypeNumber(qrData),
+      },
       dotsOptions: { color: state.dotColor, type: state.dotType },
       backgroundOptions: { color: state.bgColor },
       cornersSquareOptions: { color: state.cornerColor, type: "extra-rounded" },
@@ -314,8 +345,8 @@ export default function BuilderPage() {
     const url = URL.createObjectURL(blob);
     const img = new Image();
     img.onload = () => {
-      const pad = 60;
-      const textH = 110;
+      const pad = 140;
+      const textH = 260;
       const w = img.width + pad * 2;
       const h = img.height + pad * 2 + textH;
       const canvas = document.createElement("canvas");
@@ -323,7 +354,7 @@ export default function BuilderPage() {
       canvas.height = h;
       const ctx = canvas.getContext("2d");
 
-      const radius = 36;
+      const radius = 84;
       ctx.fillStyle = state.cardBg;
       ctx.beginPath();
       ctx.moveTo(radius, 0);
@@ -338,11 +369,11 @@ export default function BuilderPage() {
 
       ctx.textAlign = "center";
       ctx.fillStyle = "#141821";
-      ctx.font = '700 30px "Space Grotesk", sans-serif';
-      ctx.fillText(state.title, w / 2, img.height + pad + 42);
+      ctx.font = '700 70px "Space Grotesk", sans-serif';
+      ctx.fillText(state.title, w / 2, img.height + pad + 99);
       ctx.fillStyle = "#8a90a0";
-      ctx.font = '500 17px "JetBrains Mono", monospace';
-      ctx.fillText(state.subtitle, w / 2, img.height + pad + 72);
+      ctx.font = '500 40px "JetBrains Mono", monospace';
+      ctx.fillText(state.subtitle, w / 2, img.height + pad + 169);
 
       canvas.toBlob((b) => {
         const a = document.createElement("a");
