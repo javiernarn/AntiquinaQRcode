@@ -1,24 +1,57 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import logo from "../assets/images/logo.png";
+
+// Total splash duration. The progress bar and staged status text are both
+// driven off this single value, so they always land on 100% together.
+const SPLASH_MS = 3000;
+
+// Named phases the splash walks through, each with the % of SPLASH_MS
+// at which it should appear.
+const STEPS = [
+  { at: 0, label: "Initializing workspace" },
+  { at: 0.35, label: "Loading QR render engine" },
+  { at: 0.7, label: "Preparing your canvas" },
+  { at: 0.94, label: "Ready" },
+];
 
 export default function MainPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { isAuthenticated } = useAuth();
   const justSignedIn = location.state?.from === "login";
+  const [progress, setProgress] = useState(0);
 
   useEffect(() => {
     document.title = "Loading | QR Code Builder";
   }, []);
 
+  // Drive a determinate progress bar across SPLASH_MS via rAF, then hand
+  // off to the destination route once it completes.
   useEffect(() => {
+    let raf;
+    const start = performance.now();
+
+    const tick = (now) => {
+      const pct = Math.min(1, (now - start) / SPLASH_MS);
+      setProgress(pct);
+      if (pct < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+
     const t = setTimeout(() => {
       navigate(isAuthenticated ? "/builder" : "/login", { replace: true });
-    }, 1400);
-    return () => clearTimeout(t);
+    }, SPLASH_MS);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(t);
+    };
   }, [isAuthenticated, navigate]);
+
+  const stepLabel = [...STEPS].reverse().find((s) => progress >= s.at)?.label ?? STEPS[0].label;
+  const percent = Math.round(progress * 100);
 
   return (
     <>
@@ -144,33 +177,34 @@ export default function MainPage() {
           background: rgba(148, 163, 184, 0.14);
           margin-bottom: 12px;
         }
-        .mp-loader::before {
-          content: "";
+        .mp-loader-fill {
           position: absolute; top: 0; left: 0; bottom: 0;
-          width: 40%;
           border-radius: 4px;
           background: linear-gradient(90deg, var(--accent), var(--accent-2), var(--accent-3));
-          animation: mp-slide 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
-        }
-        @keyframes mp-slide {
-          0%   { left: -40%; }
-          100% { left: 100%; }
+          transition: width 0.12s linear;
         }
 
+        .mp-loading-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+        }
         .mp-loading-text {
           font-size: 12px;
-          letter-spacing: 0.16em;
+          letter-spacing: 0.1em;
           text-transform: uppercase;
           font-weight: 700;
           color: var(--text-muted);
           font-family: 'JetBrains Mono', monospace;
+          transition: opacity 0.25s ease;
         }
-        .mp-loading-text .dot { display: inline-block; animation: mp-blink 1.4s infinite; }
-        .mp-loading-text .dot:nth-child(2) { animation-delay: 0.2s; }
-        .mp-loading-text .dot:nth-child(3) { animation-delay: 0.4s; }
-        @keyframes mp-blink {
-          0%, 80%, 100% { opacity: 0.3; }
-          40%           { opacity: 1; }
+        .mp-loading-pct {
+          font-size: 12px;
+          font-weight: 700;
+          color: var(--accent);
+          font-family: 'JetBrains Mono', monospace;
+          font-variant-numeric: tabular-nums;
         }
 
         @keyframes mp-fade-up {
@@ -179,7 +213,7 @@ export default function MainPage() {
         }
 
         @media (prefers-reduced-motion: reduce) {
-          .mp-blob, .mp-logo-wrap, .mp-card, .mp-loader::before, .mp-loading-text .dot {
+          .mp-blob, .mp-logo-wrap, .mp-card {
             animation: none !important;
           }
         }
@@ -207,9 +241,19 @@ export default function MainPage() {
             {justSignedIn ? "Signed in — preparing your workspace…" : "Preparing your workspace, please wait…"}
           </p>
 
-          <div className="mp-loader" aria-hidden="true" />
-          <div className="mp-loading-text">
-            Loading<span className="dot">.</span><span className="dot">.</span><span className="dot">.</span>
+          <div
+            className="mp-loader"
+            role="progressbar"
+            aria-valuenow={percent}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label="Loading QR Code Builder"
+          >
+            <div className="mp-loader-fill" style={{ width: `${percent}%` }} />
+          </div>
+          <div className="mp-loading-row">
+            <span className="mp-loading-text">{stepLabel}</span>
+            <span className="mp-loading-pct">{percent}%</span>
           </div>
         </div>
       </div>
