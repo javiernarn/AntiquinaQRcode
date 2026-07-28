@@ -697,6 +697,23 @@ export default function BuilderPage() {
     pushToast("Logo removed", "default");
   };
 
+  // True only once the "Remove background behind logo" checkbox is on AND
+  // the background removal has actually run and produced a different
+  // (transparent) image — never true from just uploading a logo, and never
+  // true while the checkbox is on but processing hasn't finished yet.
+  const logoBgRemoved = Boolean(
+    state.removeLogoBg && state.logo && state.logoRaw && state.logo !== state.logoRaw && !bgRemoving
+  );
+
+  const downloadLogoNoBg = () => {
+    if (!logoBgRemoved) return;
+    const a = document.createElement("a");
+    a.href = state.logo;
+    a.download = (state.title || "logo").replace(/\s+/g, "-").toLowerCase() + "-no-bg.png";
+    a.click();
+    pushToast("Logo (no background) downloaded", "success");
+  };
+
   const downloadPng = async () => {
     if (phase !== "ready") return;
     const pngDataUrl = await svgToPngDataUrl(qrRef.current, 800, 800);
@@ -1206,7 +1223,14 @@ export default function BuilderPage() {
               )}
               {state.removeLogoBg && (
                 <p className="hint-text">
-                  <Eraser size={12} /> Works best on logos with a plain, solid-color background.
+                  <Eraser size={12} />
+                  <span>
+                    Runs automatically in your browser. Works best when the logo has a plain,
+                    solid-color (or gently-gradient) background with a clear edge — busy photo
+                    backgrounds or backgrounds close in color to the artwork may not clear
+                    fully, or may take a sliver of the logo with them. Check the preview below;
+                    if it doesn't look right, untick this box to keep the original.
+                  </span>
                 </p>
               )}
               {state.logo && (
@@ -1327,6 +1351,23 @@ export default function BuilderPage() {
               </div>
             )}
           </div>
+
+          {logoBgRemoved && (
+            <div className="logo-bg-download">
+              <div className="logo-bg-download-preview">
+                <img src={state.logo} alt="Logo with background removed" />
+              </div>
+              <div className="logo-bg-download-info">
+                <span className="logo-bg-download-title">Logo background removed</span>
+                <span className="logo-bg-download-sub">
+                  You can download just this transparent logo, separate from the QR code.
+                </span>
+              </div>
+              <button type="button" className="btn small" onClick={downloadLogoNoBg}>
+                <Download size={14} /> Download Logo (No BG)
+              </button>
+            </div>
+          )}
 
           <div className="actions">
             <button className="btn primary" onClick={downloadPng} disabled={phase !== "ready"}>
@@ -1688,6 +1729,32 @@ const styles = `
   .stale-overlay span{
     font-family:'JetBrains Mono', monospace; font-size:12px; color:#fff;
     background:rgba(255,255,255,0.1); padding:5px 12px; border-radius:999px;
+  }
+
+  .logo-bg-download{
+    display:flex; align-items:center; gap:12px; margin-top:20px;
+    padding:10px 12px; border:1px solid var(--border); border-radius:11px;
+    background:var(--surface-2);
+  }
+  .logo-bg-download-preview{
+    flex-shrink:0; width:40px; height:40px; border-radius:8px; overflow:hidden;
+    background-image:
+      linear-gradient(45deg,#c9cdd6 25%,transparent 25%),
+      linear-gradient(-45deg,#c9cdd6 25%,transparent 25%),
+      linear-gradient(45deg,transparent 75%,#c9cdd6 75%),
+      linear-gradient(-45deg,transparent 75%,#c9cdd6 75%);
+    background-size:10px 10px;
+    background-position:0 0,0 5px,5px -5px,-5px 0;
+    background-color:#eef0f4;
+  }
+  .logo-bg-download-preview img{ width:100%; height:100%; object-fit:contain; display:block; }
+  .logo-bg-download-info{ display:flex; flex-direction:column; gap:2px; flex:1; min-width:0; }
+  .logo-bg-download-title{ font-size:12.5px; font-weight:600; color:var(--text); }
+  .logo-bg-download-sub{ font-size:11px; color:var(--text-muted); }
+  .logo-bg-download .btn.small{ flex-shrink:0; }
+  @media (max-width:480px){
+    .logo-bg-download{ flex-wrap:wrap; }
+    .logo-bg-download .btn.small{ width:100%; justify-content:center; }
   }
 
   .actions{ display:flex; gap:12px; margin-top:28px; }
