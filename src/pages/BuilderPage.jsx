@@ -277,14 +277,15 @@ function contrastRatio(hexA, hexB) {
   return (light + 0.05) / (dark + 0.05);
 }
 
-// Removes a plain, solid-color background from an uploaded logo, entirely
-// in the browser (no upload to a third-party service). It samples the four
-// corner pixels to guess the background color, then makes every pixel
-// within a color-distance threshold of that color transparent, with a soft
-// fade near the edge of the threshold so cutouts don't look jagged. This
-// works well for the common case (a logo on a white/solid card) and is a
-// no-op-ish pass-through for logos that are already transparent or busy.
-function removeSolidBackground(dataUrl) {
+// Removes a background from an uploaded logo, entirely in the browser (no
+// upload to a third-party service). Flood-fills inward from every edge
+// pixel: a pixel joins the "background" region if it's close enough to the
+// *neighbor that reached it* — not to one fixed sampled color — so it
+// follows soft gradients/vignettes all the way across the image, while
+// still stopping hard at the actual logo artwork (that color jump is much
+// bigger than a gradient's step-to-step drift). A solid-color background
+// is just a gradient with zero drift, so this also covers the old case.
+function removeSolidBackground(dataUrl, { tolerance = 30 } = {}) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
@@ -302,24 +303,61 @@ function removeSolidBackground(dataUrl) {
         return;
       }
       const d = imageData.data;
-      const corners = [
-        [0, 0], [width - 1, 0], [0, height - 1], [width - 1, height - 1],
-      ];
-      let r = 0, g = 0, b = 0;
-      corners.forEach(([x, y]) => {
-        const i = (y * width + x) * 4;
-        r += d[i]; g += d[i + 1]; b += d[i + 2];
-      });
-      r /= 4; g /= 4; b /= 4;
+      const n = width * height;
+      const idx = (x, y) => y * width + x;
+      const colorAt = (i) => {
+        const p = i * 4;
+        return [d[p], d[p + 1], d[p + 2]];
+      };
 
-      const threshold = 46;
-      for (let i = 0; i < d.length; i += 4) {
-        const dr = d[i] - r, dg = d[i + 1] - g, db = d[i + 2] - b;
-        const dist = Math.sqrt(dr * dr + dg * dg + db * db);
-        if (dist < threshold) {
-          d[i + 3] = Math.min(d[i + 3], Math.round(255 * (dist / threshold)));
+      // 1) Border-seeded flood fill.
+      const bg = new Uint8Array(n); // 1 = background, to be made transparent
+      const visited = new Uint8Array(n);
+      const stack = [];
+      for (let x = 0; x < width; x++) stack.push(idx(x, 0), idx(x, height - 1));
+      for (let y = 0; y < height; y++) stack.push(idx(0, y), idx(width - 1, y));
+
+      while (stack.length) {
+        const i = stack.pop();
+        if (visited[i]) continue;
+        visited[i] = 1;
+        bg[i] = 1;
+        const x = i % width;
+        const y = (i / width) | 0;
+        const [r, g, b] = colorAt(i);
+        const neighbors = [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]];
+        for (const [nx, ny] of neighbors) {
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+          const ni = idx(nx, ny);
+          if (visited[ni]) continue;
+          const [nr, ng, nb] = colorAt(ni);
+          const dist = Math.sqrt((r - nr) ** 2 + (g - ng) ** 2 + (b - nb) ** 2);
+          if (dist < tolerance) stack.push(ni);
         }
       }
+
+      // 2) Zero the alpha of every background pixel.
+      for (let i = 0; i < n; i++) {
+        if (bg[i]) d[i * 4 + 3] = 0;
+      }
+
+      // 3) Feather the cutout edge one pixel so it doesn't look jagged:
+      // any pixel still opaque but touching a cleared pixel gets half alpha.
+      const alphaBefore = new Uint8ClampedArray(n);
+      for (let i = 0; i < n; i++) alphaBefore[i] = d[i * 4 + 3];
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const i = idx(x, y);
+          if (alphaBefore[i] === 0) continue;
+          const neighbors = [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]];
+          const touchesCleared = neighbors.some(([nx, ny]) => {
+            if (nx < 0 || ny < 0 || nx >= width || ny >= height) return false;
+            return alphaBefore[idx(nx, ny)] === 0;
+          });
+          if (touchesCleared) d[i * 4 + 3] = Math.round(alphaBefore[i] * 0.5);
+        }
+      }
+
       ctx.putImageData(imageData, 0, 0);
       resolve(canvas.toDataURL("image/png"));
     };
@@ -1421,17 +1459,34 @@ const styles = `
   .dot-tile-extra-rounded{ border-radius:9px; }
   .dot-tile-classy{ border-radius:0; clip-path:polygon(0 0,100% 0,100% 65%,65% 100%,0 100%); }
   .dot-tile-classy-rounded{ border-radius:5px; clip-path:polygon(0 0,100% 0,100% 65%,65% 100%,0 100%); }
+  .dot-tile-diamond{ clip-path:polygon(50% 0%,100% 50%,50% 100%,0% 50%); transform:scale(.95); }
+  .dot-tile-star{ clip-path:polygon(50% 0%,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%); }
+  .dot-tile-hexagon{ clip-path:polygon(25% 0%,75% 0%,100% 50%,75% 100%,25% 100%,0% 50%); }
+  .dot-tile-cross{ clip-path:polygon(35% 0%,65% 0%,65% 35%,100% 35%,100% 65%,65% 65%,65% 100%,35% 100%,35% 65%,0% 65%,0% 35%,35% 35%); }
+  .dot-tile-triangle{ clip-path:polygon(50% 0%,100% 100%,0% 100%); }
+  .dot-tile-leaf{ border-radius:55% 0% 55% 0%; }
 
   /* Eye frame preview: hollow ring, shape = corner-square type */
   .eye-frame{ width:36px; height:36px; border:6px solid currentColor; box-sizing:border-box; display:block; }
   .eye-frame-square{ border-radius:0; }
-  .eye-frame-extra-rounded{ border-radius:30%; }
-  .eye-frame-dot{ border-radius:50%; }
+  .eye-frame-rounded{ border-radius:20%; }
+  .eye-frame-extra-rounded{ border-radius:38%; }
+  .eye-frame-circle, .eye-frame-dot{ border-radius:50%; }
+  .eye-frame-leaf{ border-radius:45% 0% 45% 0%; }
+  .eye-frame-leaf-inverse{ border-radius:0% 45% 0% 45%; }
+  .eye-frame-diamond{ clip-path:polygon(50% 0%,100% 50%,50% 100%,0% 50%); }
+  .eye-frame-octagon{ clip-path:polygon(30% 0%,70% 0%,100% 30%,100% 70%,70% 100%,30% 100%,0% 70%,0% 30%); }
 
   /* Eye ball preview: filled center block, shape = corner-dot type */
   .eye-ball{ width:20px; height:20px; background:currentColor; display:block; }
-  .eye-ball-square{ border-radius:3px; }
+  .eye-ball-square{ border-radius:0; }
   .eye-ball-dot{ border-radius:50%; }
+  .eye-ball-rounded{ border-radius:28%; }
+  .eye-ball-extra-rounded{ border-radius:45%; }
+  .eye-ball-diamond{ clip-path:polygon(50% 0%,100% 50%,50% 100%,0% 50%); }
+  .eye-ball-star{ clip-path:polygon(50% 0%,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%); }
+  .eye-ball-leaf{ border-radius:50% 0% 50% 0%; }
+  .eye-ball-cross{ clip-path:polygon(35% 0%,65% 0%,65% 35%,100% 35%,100% 65%,65% 65%,65% 100%,35% 100%,35% 65%,0% 65%,0% 35%,35% 35%); }
 
   .upload{ border:1.5px dashed var(--border); border-radius:9px; padding:16px; text-align:center;
     cursor:pointer; color:var(--text-muted); font-size:12.5px; display:block; }
