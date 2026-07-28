@@ -278,13 +278,26 @@ function contrastRatio(hexA, hexB) {
 }
 
 // Removes a background from an uploaded logo, entirely in the browser (no
-// upload to a third-party service). Flood-fills inward from every edge
-// pixel: a pixel joins the "background" region if it's close enough to the
-// *neighbor that reached it* — not to one fixed sampled color — so it
-// follows soft gradients/vignettes all the way across the image, while
-// still stopping hard at the actual logo artwork (that color jump is much
-// bigger than a gradient's step-to-step drift). A solid-color background
-// is just a gradient with zero drift, so this also covers the old case.
+// upload to a third-party service).
+//
+// Earlier version compared each pixel to the *neighbor that reached it*
+// (a "drift" flood fill), meant to follow soft gradients/vignettes. But on
+// a real photo/logo — especially a JPEG, which softens every edge with
+// compression noise — those tiny per-step color changes chain all the way
+// from the background, straight through anti-aliased seams, into the
+// actual artwork (text, rings, icons), wiping out most of the logo along
+// with the background. That's the "it removes the logo too" bug.
+//
+// Fixed approach:
+// 1) Sample a single background reference color (median of the border
+//    pixels) instead of letting the comparison drift step-by-step. A
+//    candidate pixel is only background if it's close to that *fixed*
+//    reference — still forgiving of mild vignettes near the edge, but no
+//    longer able to tunnel arbitrarily far into unrelated colors.
+// 2) Run a morphological "opening" (erode, then dilate) on the resulting
+//    background mask. This clears the thin, one-pixel-wide bridges that
+//    anti-aliasing creates between the background and interior artwork,
+//    without shrinking the real, solid background region.
 function removeSolidBackground(dataUrl, { tolerance = 30 } = {}) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -310,7 +323,34 @@ function removeSolidBackground(dataUrl, { tolerance = 30 } = {}) {
         return [d[p], d[p + 1], d[p + 2]];
       };
 
-      // 1) Border-seeded flood fill.
+      // 0) Robust background reference color: median of every border pixel
+      // (median rather than mean so a few corner artifacts/rounded corners
+      // don't skew it).
+      const borderR = [], borderG = [], borderB = [];
+      for (let x = 0; x < width; x++) {
+        for (const y of [0, height - 1]) {
+          const [r, g, b] = colorAt(idx(x, y));
+          borderR.push(r); borderG.push(g); borderB.push(b);
+        }
+      }
+      for (let y = 0; y < height; y++) {
+        for (const x of [0, width - 1]) {
+          const [r, g, b] = colorAt(idx(x, y));
+          borderR.push(r); borderG.push(g); borderB.push(b);
+        }
+      }
+      const median = (arr) => {
+        const s = [...arr].sort((a, b) => a - b);
+        return s[Math.floor(s.length / 2)];
+      };
+      const ref = [median(borderR), median(borderG), median(borderB)];
+      const distToRef = (i) => {
+        const [r, g, b] = colorAt(i);
+        return Math.sqrt((r - ref[0]) ** 2 + (g - ref[1]) ** 2 + (b - ref[2]) ** 2);
+      };
+
+      // 1) Border-seeded flood fill, but membership is judged against the
+      // fixed reference color above (not the neighbor that reached it).
       const bg = new Uint8Array(n); // 1 = background, to be made transparent
       const visited = new Uint8Array(n);
       const stack = [];
@@ -321,27 +361,61 @@ function removeSolidBackground(dataUrl, { tolerance = 30 } = {}) {
         const i = stack.pop();
         if (visited[i]) continue;
         visited[i] = 1;
+        if (distToRef(i) > tolerance) continue;
         bg[i] = 1;
         const x = i % width;
         const y = (i / width) | 0;
-        const [r, g, b] = colorAt(i);
         const neighbors = [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]];
         for (const [nx, ny] of neighbors) {
           if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
           const ni = idx(nx, ny);
           if (visited[ni]) continue;
-          const [nr, ng, nb] = colorAt(ni);
-          const dist = Math.sqrt((r - nr) ** 2 + (g - ng) ** 2 + (b - nb) ** 2);
-          if (dist < tolerance) stack.push(ni);
+          if (distToRef(ni) <= tolerance) stack.push(ni);
         }
       }
 
-      // 2) Zero the alpha of every background pixel.
+      // 2) Morphological opening on the bg mask: erode twice (a pixel only
+      // survives if all 4 neighbors are also marked bg — outside the
+      // canvas counts as bg), then dilate twice back, clamped to the
+      // original mask. This removes thin filaments that snuck through
+      // anti-aliased seams into the artwork while leaving solid background
+      // regions untouched.
+      const at = (mask, x, y) => {
+        if (x < 0 || y < 0 || x >= width || y >= height) return 1;
+        return mask[idx(x, y)];
+      };
+      const erode = (mask) => {
+        const out = new Uint8Array(n);
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const i = idx(x, y);
+            out[i] = mask[i] && at(mask, x - 1, y) && at(mask, x + 1, y) && at(mask, x, y - 1) && at(mask, x, y + 1) ? 1 : 0;
+          }
+        }
+        return out;
+      };
+      const dilate = (mask, clamp) => {
+        const out = new Uint8Array(n);
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const i = idx(x, y);
+            const grown = mask[i] || at(mask, x - 1, y) || at(mask, x + 1, y) || at(mask, x, y - 1) || at(mask, x, y + 1) ? 1 : 0;
+            out[i] = grown && clamp[i] ? 1 : 0;
+          }
+        }
+        return out;
+      };
+      let opened = erode(bg);
+      opened = erode(opened);
+      opened = dilate(opened, bg);
+      opened = dilate(opened, bg);
+
+      // 3) Zero the alpha of every background pixel.
       for (let i = 0; i < n; i++) {
-        if (bg[i]) d[i * 4 + 3] = 0;
+        if (opened[i]) d[i * 4 + 3] = 0;
       }
 
-      // 3) Feather the cutout edge one pixel so it doesn't look jagged:
+      // 4) Feather the cutout edge one pixel so it doesn't look jagged:
       // any pixel still opaque but touching a cleared pixel gets half alpha.
       const alphaBefore = new Uint8ClampedArray(n);
       for (let i = 0; i < n; i++) alphaBefore[i] = d[i * 4 + 3];
