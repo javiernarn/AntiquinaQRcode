@@ -7,6 +7,7 @@ import {
   Link2, Type, Wifi, Mail, Phone, MessageSquare, MessageCircle,
   User, Calendar, MapPin, Eye, EyeOff,
   Palette, Bookmark, Copy, RotateCcw, AlertTriangle, ShieldCheck,
+  Sparkles, RefreshCw, Eraser, ScanLine, ImageOff, QrCode,
 } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import { getUserStorage, setUserStorage } from "../utils/storage";
@@ -26,12 +27,69 @@ const initialsOf = (name = "") =>
     .join("")
     .toUpperCase() || "?";
 
+// "Body" shape = the shape of each individual data module. These six are
+// every dot type the renderer (qr-code-styling) actually supports — rather
+// than list decorative options it can't draw, each one here is real and
+// live-previewed with the exact same shape logic used in the render below.
 const DOT_STYLES = [
-  { val: "dots", label: "Dots" },
-  { val: "rounded", label: "Round" },
-  { val: "classy", label: "Classy" },
   { val: "square", label: "Square" },
+  { val: "dots", label: "Dots" },
+  { val: "rounded", label: "Rounded" },
+  { val: "extra-rounded", label: "Extra Round" },
+  { val: "classy", label: "Classy" },
+  { val: "classy-rounded", label: "Classy Round" },
 ];
+
+// "Eye Frame" = the outer ring of the three big position markers.
+const EYE_FRAME_SHAPES = [
+  { val: "square", label: "Square" },
+  { val: "extra-rounded", label: "Rounded" },
+  { val: "dot", label: "Circle" },
+];
+
+// "Eye Ball" = the solid inner square of each position marker.
+const EYE_BALL_SHAPES = [
+  { val: "square", label: "Square" },
+  { val: "dot", label: "Circle" },
+];
+
+// Small, generically-drawn (not brand-trademarked) glyphs a user can drop
+// into the center of their QR as a logo with one tap — the same "pick an
+// icon instead of uploading a file" convenience popular QR tools offer,
+// built from scratch here as flat-color rounded tiles.
+const QUICK_LOGO_ICONS = [
+  { id: "website", label: "Website", color: "#2563eb",
+    path: "M16 6a10 10 0 100 20 10 10 0 000-20zm0 0c-2.8 3-2.8 17 0 20m0-20c2.8 3 2.8 17 0 20M6.6 12h18.8M6.6 20h18.8" },
+  { id: "wifi", label: "Wi-Fi", color: "#0891b2",
+    path: "M8 14.5a12 12 0 0116 0M11.3 18a7.4 7.4 0 019.4 0M14.6 21.4a2.8 2.8 0 012.8 0" },
+  { id: "phone", label: "Phone", color: "#16a34a",
+    path: "M11 8.2c.3 1.6 1 3.1 2 4.5l1.9-1a1 1 0 011.2.2l2.6 2.9a1 1 0 01-.1 1.4c-3.6 3.2-8.9-.4-11.9-4.9C3.7 6.6 4.2 3 8.5 1.6a1 1 0 011.3.4l1.8 3a1 1 0 01-.1 1.2l-.5 1.9v.1z" },
+  { id: "email", label: "Email", color: "#dc2626",
+    path: "M7 10h18v13H7zM7 10l9 7 9-7" },
+  { id: "calendar", label: "Calendar", color: "#7c3aed",
+    path: "M8 8h16v16H8zM8 8V5h16v3M12 4v4M20 4v4M8 14h16" },
+  { id: "pin", label: "Location", color: "#e11d48",
+    path: "M16 26s7-7.4 7-13a7 7 0 10-14 0c0 5.6 7 13 7 13zm0-10.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z" },
+  { id: "chat", label: "Chat", color: "#059669",
+    path: "M6 8h20v12H14l-5 4v-4H6z" },
+  { id: "share", label: "Share", color: "#ea580c",
+    path: "M22 8a3 3 0 100-6 3 3 0 000 6zM10 16a3 3 0 100-6 3 3 0 000 6zM22 30a3 3 0 100-6 3 3 0 000 6zM12.7 14.5l6.6-3.4M12.7 17.5l6.6 3.4" },
+  { id: "pay", label: "Payment", color: "#0d9488",
+    path: "M16 6a10 10 0 100 20 10 10 0 000-20zm0 4.5v11m3-8.6c0-1.3-1.3-2.4-3-2.4s-3 1-3 2.4c0 3 6 1.6 6 4.6 0 1.4-1.3 2.5-3 2.5s-3-1-3-2.4" },
+  { id: "star", label: "Rating", color: "#ca8a04",
+    path: "M16 5l3.5 7.2 7.9 1.1-5.7 5.6 1.3 7.9L16 22.9l-7 3.9 1.3-7.9-5.7-5.6 7.9-1.1z" },
+];
+
+// Turns one of the glyphs above into a flat-color rounded-square tile and
+// encodes it as an inline SVG data URL — no network round-trip, no file.
+function quickIconToDataUrl(icon) {
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 32 32">` +
+    `<rect width="32" height="32" rx="8" fill="${icon.color}"/>` +
+    `<path d="${icon.path}" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>` +
+    `</svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
 
 // All the QR code "formats" the builder can generate. Each one maps to a
 // small form (rendered below) and a raw-data encoder (buildQrData).
@@ -67,12 +125,16 @@ const DEFAULT_STATE = {
   title: "Example Title",
   subtitle: "Example Subtitle",
   dotType: "dots",
+  cornerSquareType: "extra-rounded",
+  cornerDotType: "dot",
   dotColor: "#0e214a",
   bgColor: "#ffffff",
   cornerColor: "#0e214a",
   cornerDotColor: "#0e214a",
   cardBg: "#ffffff",
   logo: null,
+  logoRaw: null,
+  removeLogoBg: false,
 };
 
 // Escapes characters that are special inside WIFI:/VCARD-style payloads.
@@ -166,6 +228,57 @@ function contrastRatio(hexA, hexB) {
   return (light + 0.05) / (dark + 0.05);
 }
 
+// Removes a plain, solid-color background from an uploaded logo, entirely
+// in the browser (no upload to a third-party service). It samples the four
+// corner pixels to guess the background color, then makes every pixel
+// within a color-distance threshold of that color transparent, with a soft
+// fade near the edge of the threshold so cutouts don't look jagged. This
+// works well for the common case (a logo on a white/solid card) and is a
+// no-op-ish pass-through for logos that are already transparent or busy.
+function removeSolidBackground(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0);
+      const { width, height } = canvas;
+      let imageData;
+      try {
+        imageData = ctx.getImageData(0, 0, width, height);
+      } catch (err) {
+        reject(err);
+        return;
+      }
+      const d = imageData.data;
+      const corners = [
+        [0, 0], [width - 1, 0], [0, height - 1], [width - 1, height - 1],
+      ];
+      let r = 0, g = 0, b = 0;
+      corners.forEach(([x, y]) => {
+        const i = (y * width + x) * 4;
+        r += d[i]; g += d[i + 1]; b += d[i + 2];
+      });
+      r /= 4; g /= 4; b /= 4;
+
+      const threshold = 46;
+      for (let i = 0; i < d.length; i += 4) {
+        const dr = d[i] - r, dg = d[i + 1] - g, db = d[i + 2] - b;
+        const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+        if (dist < threshold) {
+          d[i + 3] = Math.min(d[i + 3], Math.round(255 * (dist / threshold)));
+        }
+      }
+      ctx.putImageData(imageData, 0, 0);
+      resolve(canvas.toDataURL("image/png"));
+    };
+    img.onerror = () => reject(new Error("Couldn't load image"));
+    img.src = dataUrl;
+  });
+}
+
 // Short payloads (like a bare URL) naturally produce a low-version QR code
 // with very few, very large modules — at the "dots" dot-style that reads as
 // big blobby circles crowded on top of each other instead of the airy,
@@ -209,6 +322,22 @@ export default function BuilderPage() {
   const { toasts, push: pushToast } = useToasts();
   const topbarRef = useRef(null);
   const [topbarH, setTopbarH] = useState(72);
+
+  // The QR code is never shown until the user explicitly asks for it.
+  // phase: "idle" (nothing generated yet) -> "scanning" (brief loading
+  // moment) -> "ready" (QR visible). Any edit made after "ready" doesn't
+  // silently swap the visible code out from under the user — it just marks
+  // the current preview as stale until they regenerate.
+  const [phase, setPhase] = useState("idle");
+  const [generatedSignature, setGeneratedSignature] = useState(null);
+  const [scanMsgIdx, setScanMsgIdx] = useState(0);
+  const scanTimeoutRef = useRef(null);
+  const SCAN_MESSAGES = [
+    "Reading your details…",
+    "Applying design & colors…",
+    "Placing the logo…",
+    "Finalizing QR code…",
+  ];
 
   useEffect(() => {
     document.title = "QR Code Builder";
@@ -261,6 +390,36 @@ export default function BuilderPage() {
     [state.dotColor, state.bgColor]
   );
 
+  // A fingerprint of everything that affects the rendered code/card. Used
+  // to detect "you changed something since the last time you generated".
+  const currentSignature = useMemo(() => JSON.stringify(state), [state]);
+  const isStale = phase === "ready" && generatedSignature !== null && generatedSignature !== currentSignature;
+
+  // Cycle the little status line while the "scanning" loader is showing.
+  useEffect(() => {
+    if (phase !== "scanning") return;
+    setScanMsgIdx(0);
+    const id = setInterval(() => setScanMsgIdx((i) => (i + 1) % SCAN_MESSAGES.length), 700);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
+
+  useEffect(() => () => clearTimeout(scanTimeoutRef.current), []);
+
+  // Kicks off (or replays) the "Generate" moment: freeze the current
+  // signature, show the scanning loader for a beat, then reveal the code.
+  const generateQr = useCallback(() => {
+    const sigAtClick = currentSignature;
+    setPhase("scanning");
+    clearTimeout(scanTimeoutRef.current);
+    scanTimeoutRef.current = setTimeout(() => {
+      setGeneratedSignature(sigAtClick);
+      setPhase("ready");
+      playScan();
+    }, 3000);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentSignature]);
+
   // Init QR renderer once.
   useEffect(() => {
     qrRef.current = new QRCodeStyling({
@@ -275,8 +434,8 @@ export default function BuilderPage() {
       },
       dotsOptions: { color: state.dotColor, type: state.dotType },
       backgroundOptions: { color: state.bgColor },
-      cornersSquareOptions: { color: state.cornerColor, type: "extra-rounded" },
-      cornersDotOptions: { color: state.cornerDotColor, type: "dot" },
+      cornersSquareOptions: { color: state.cornerColor, type: state.cornerSquareType },
+      cornersDotOptions: { color: state.cornerDotColor, type: state.cornerDotType },
       imageOptions: { crossOrigin: "anonymous", margin: 10, imageSize: 0.32 },
     });
     if (renderRef.current) qrRef.current.append(renderRef.current);
@@ -303,8 +462,8 @@ export default function BuilderPage() {
       },
       dotsOptions: { color: state.dotColor, type: state.dotType },
       backgroundOptions: { color: state.bgColor },
-      cornersSquareOptions: { color: state.cornerColor, type: "extra-rounded" },
-      cornersDotOptions: { color: state.cornerDotColor, type: "dot" },
+      cornersSquareOptions: { color: state.cornerColor, type: state.cornerSquareType },
+      cornersDotOptions: { color: state.cornerDotColor, type: state.cornerDotType },
       image: state.logo || undefined,
     });
     playScan();
@@ -324,23 +483,68 @@ export default function BuilderPage() {
 
   const setQrType = (id) => setState((s) => ({ ...s, qrType: id }));
 
+  const [bgRemoving, setBgRemoving] = useState(false);
+
   const handleLogoUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => {
-      setState((s) => ({ ...s, logo: ev.target.result }));
-      pushToast("Logo added to QR code", "success");
+    reader.onload = async (ev) => {
+      const raw = ev.target.result;
+      setState((s) => ({ ...s, logoRaw: raw, logo: raw }));
+      if (state.removeLogoBg) {
+        setBgRemoving(true);
+        try {
+          const cut = await removeSolidBackground(raw);
+          setState((s) => ({ ...s, logo: cut }));
+          pushToast("Logo added — background removed", "success");
+        } catch {
+          pushToast("Logo added (couldn't remove background)", "warning");
+        } finally {
+          setBgRemoving(false);
+        }
+      } else {
+        pushToast("Logo added to QR code", "success");
+      }
     };
     reader.readAsDataURL(file);
   };
 
+  // Toggling this checkbox re-processes the already-uploaded logo, or
+  // reverts to the original if the user turns it back off.
+  const toggleRemoveBg = async (e) => {
+    const checked = e.target.checked;
+    setState((s) => ({ ...s, removeLogoBg: checked }));
+    if (!state.logoRaw) return;
+    if (checked) {
+      setBgRemoving(true);
+      try {
+        const cut = await removeSolidBackground(state.logoRaw);
+        setState((s) => ({ ...s, logo: cut }));
+        pushToast("Background removed from logo", "success");
+      } catch {
+        pushToast("Couldn't process that image", "warning");
+      } finally {
+        setBgRemoving(false);
+      }
+    } else {
+      setState((s) => ({ ...s, logo: state.logoRaw }));
+    }
+  };
+
+  const applyQuickIcon = (icon) => {
+    const dataUrl = quickIconToDataUrl(icon);
+    setState((s) => ({ ...s, logo: dataUrl, logoRaw: dataUrl, removeLogoBg: false }));
+    pushToast(`"${icon.label}" icon added to QR code`, "success");
+  };
+
   const removeLogo = () => {
-    setState((s) => ({ ...s, logo: null }));
+    setState((s) => ({ ...s, logo: null, logoRaw: null, removeLogoBg: false }));
     pushToast("Logo removed", "default");
   };
 
   const downloadPng = async () => {
+    if (phase !== "ready") return;
     const blob = await qrRef.current.getRawData("png");
     const url = URL.createObjectURL(blob);
     const img = new Image();
@@ -387,6 +591,7 @@ export default function BuilderPage() {
   };
 
   const downloadSvg = () => {
+    if (phase !== "ready") return;
     qrRef.current.download({
       name: (state.title || "qr-code").replace(/\s+/g, "-").toLowerCase(),
       extension: "svg",
@@ -405,6 +610,8 @@ export default function BuilderPage() {
 
   const resetToDefaults = () => {
     setState({ ...DEFAULT_STATE, fields: JSON.parse(JSON.stringify(DEFAULT_FIELDS)) });
+    setPhase("idle");
+    setGeneratedSignature(null);
     pushToast("Reset to defaults", "default");
   };
 
@@ -429,6 +636,8 @@ export default function BuilderPage() {
       qrType: p.state.qrType || "url",
       fields: { ...DEFAULT_FIELDS, ...(p.state.fields || {}) },
     }));
+    setPhase("idle");
+    setGeneratedSignature(null);
     pushToast(`Loaded preset "${p.name}"`, "default");
   };
 
@@ -721,22 +930,66 @@ export default function BuilderPage() {
 
           {panelTab === "design" && (
             <div className="tab-panel">
-              <div className="section-title">Style</div>
+              <div className="section-title">Body Shape</div>
               <div className="field">
-                <label>Dot shape</label>
-                <div className="style-grid">
+                <div className="shape-grid shape-grid-3">
                   {DOT_STYLES.map((d) => (
-                    <div
+                    <button
+                      type="button"
                       key={d.val}
-                      className={"style-opt" + (state.dotType === d.val ? " active" : "")}
+                      className={"shape-opt" + (state.dotType === d.val ? " active" : "")}
                       onClick={() => setState((s) => ({ ...s, dotType: d.val }))}
                     >
-                      {d.label}
-                    </div>
+                      <span className="shape-preview shape-preview-body">
+                        {[0, 1, 2, 3].map((i) => (
+                          <span key={i} className={`dot-tile dot-tile-${d.val}`} />
+                        ))}
+                      </span>
+                      <span className="shape-label">{d.label}</span>
+                    </button>
                   ))}
                 </div>
               </div>
 
+              <div className="section-title">Eye Frame Shape</div>
+              <div className="field">
+                <div className="shape-grid shape-grid-3">
+                  {EYE_FRAME_SHAPES.map((d) => (
+                    <button
+                      type="button"
+                      key={d.val}
+                      className={"shape-opt" + (state.cornerSquareType === d.val ? " active" : "")}
+                      onClick={() => setState((s) => ({ ...s, cornerSquareType: d.val }))}
+                    >
+                      <span className="shape-preview">
+                        <span className={`eye-frame eye-frame-${d.val}`} />
+                      </span>
+                      <span className="shape-label">{d.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="section-title">Eye Ball Shape</div>
+              <div className="field">
+                <div className="shape-grid shape-grid-2">
+                  {EYE_BALL_SHAPES.map((d) => (
+                    <button
+                      type="button"
+                      key={d.val}
+                      className={"shape-opt" + (state.cornerDotType === d.val ? " active" : "")}
+                      onClick={() => setState((s) => ({ ...s, cornerDotType: d.val }))}
+                    >
+                      <span className="shape-preview">
+                        <span className={`eye-ball eye-ball-${d.val}`} />
+                      </span>
+                      <span className="shape-label">{d.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="section-title">Colors</div>
               <div className="field row2">
                 <div className="color-field">
                   <input type="color" value={state.dotColor} onChange={set("dotColor")} />
@@ -771,6 +1024,17 @@ export default function BuilderPage() {
               )}
 
               <div className="section-title">Logo</div>
+
+              <label className="checkbox-field bg-remove-toggle">
+                <input
+                  type="checkbox"
+                  checked={state.removeLogoBg}
+                  onChange={toggleRemoveBg}
+                />
+                <ImageOff size={14} />
+                <span>Remove background behind logo</span>
+              </label>
+
               {!state.logo ? (
                 <label className="upload">
                   <input type="file" accept="image/*" onChange={handleLogoUpload} />
@@ -778,10 +1042,18 @@ export default function BuilderPage() {
                 </label>
               ) : (
                 <div className="logo-preview">
-                  <img src={state.logo} alt="" />
-                  <span className="logo-name">Logo added</span>
+                  <div className="logo-thumb">
+                    <img src={state.logo} alt="" />
+                    {bgRemoving && <span className="logo-thumb-spinner" />}
+                  </div>
+                  <span className="logo-name">{bgRemoving ? "Removing background…" : "Logo added"}</span>
                   <button onClick={removeLogo}>Remove</button>
                 </div>
+              )}
+              {state.removeLogoBg && (
+                <p className="hint-text">
+                  <Eraser size={12} /> Works best on logos with a plain, solid-color background.
+                </p>
               )}
               {state.logo && (
                 <div className="contrast-note warn" style={{ marginTop: 10 }}>
@@ -789,6 +1061,21 @@ export default function BuilderPage() {
                   <span>A logo covers part of the code — high error correction keeps it scannable, but test it before printing.</span>
                 </div>
               )}
+
+              <div className="quick-icon-label">Or pick a quick icon</div>
+              <div className="quick-icon-grid">
+                {QUICK_LOGO_ICONS.map((icon) => (
+                  <button
+                    type="button"
+                    key={icon.id}
+                    className="quick-icon-opt"
+                    title={icon.label}
+                    onClick={() => applyQuickIcon(icon)}
+                  >
+                    <img src={quickIconToDataUrl(icon)} alt={icon.label} />
+                  </button>
+                ))}
+              </div>
 
               <div className="section-title">Card</div>
               <div className="color-field" style={{ maxWidth: 200 }}>
@@ -840,18 +1127,58 @@ export default function BuilderPage() {
         </div>
 
         <div className="stage" id="qr-stage">
-          <div className="canvas-card" style={{ background: state.cardBg }}>
-            <div className="scan-line" ref={scanLineRef} />
-            <div ref={renderRef} />
-            <div className="card-title">{state.title}</div>
-            <div className="card-sub">{state.subtitle}</div>
+          <div className="canvas-shell">
+            {/* Always mounted (so the renderer has a stable DOM node to draw
+                into) but only visible once phase === "ready". */}
+            <div
+              className="canvas-card"
+              style={{
+                background: state.cardBg,
+                visibility: phase === "ready" ? "visible" : "hidden",
+                position: phase === "ready" ? "relative" : "absolute",
+              }}
+            >
+              <div className="scan-line" ref={scanLineRef} />
+              <div ref={renderRef} />
+              <div className="card-title">{state.title}</div>
+              <div className="card-sub">{state.subtitle}</div>
+
+              {phase === "ready" && isStale && (
+                <div className="stale-overlay">
+                  <span>Design updated</span>
+                  <button type="button" className="btn small primary" onClick={generateQr}>
+                    <RefreshCw size={13} /> Regenerate
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {phase === "idle" && (
+              <div className="qr-placeholder">
+                <QrCode size={40} />
+                <p>Your QR code isn't generated yet</p>
+                <button type="button" className="btn primary generate-btn" onClick={generateQr}>
+                  <Sparkles size={16} /> Generate QR Code
+                </button>
+              </div>
+            )}
+
+            {phase === "scanning" && (
+              <div className="qr-placeholder qr-scanning">
+                <div className="scan-ring">
+                  <ScanLine size={26} className="scan-ring-icon" />
+                </div>
+                <p className="scan-status">{SCAN_MESSAGES[scanMsgIdx]}</p>
+                <div className="scan-progress"><span /></div>
+              </div>
+            )}
           </div>
 
           <div className="actions">
-            <button className="btn primary" onClick={downloadPng}>
+            <button className="btn primary" onClick={downloadPng} disabled={phase !== "ready"}>
               <Download size={15} /> Download PNG
             </button>
-            <button className="btn" onClick={downloadSvg}>
+            <button className="btn" onClick={downloadSvg} disabled={phase !== "ready"}>
               <Download size={15} /> Download SVG
             </button>
           </div>
@@ -1028,15 +1355,76 @@ const styles = `
   }
   .style-opt.active{ border-color:var(--accent); color:var(--accent); background:rgba(94,234,212,0.08); }
 
+  /* Body / Eye Frame / Eye Ball shape pickers ------------------------- */
+  .shape-grid{ display:grid; gap:8px; }
+  .shape-grid-3{ grid-template-columns:repeat(3,1fr); }
+  .shape-grid-2{ grid-template-columns:repeat(2,1fr); }
+  .shape-opt{
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px;
+    border:1px solid var(--border); background:var(--surface-2); border-radius:11px;
+    padding:12px 6px; cursor:pointer; color:var(--text-muted);
+    font-family:'JetBrains Mono', monospace; font-size:10.5px;
+  }
+  .shape-opt:hover{ border-color:var(--border-strong); color:var(--text); }
+  .shape-opt.active{ border-color:var(--accent); color:var(--accent); background:rgba(94,234,212,0.08); }
+  .shape-preview{ width:40px; height:40px; display:flex; align-items:center; justify-content:center; }
+  .shape-label{ line-height:1; white-space:nowrap; }
+
+  /* Body shape preview: 2x2 grid of mini modules, shaped per dot type */
+  .shape-preview-body{ display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr; gap:3px; }
+  .dot-tile{ width:16px; height:16px; background:currentColor; }
+  .dot-tile-square{ border-radius:0; }
+  .dot-tile-dots{ border-radius:50%; transform:scale(.82); }
+  .dot-tile-rounded{ border-radius:5px; }
+  .dot-tile-extra-rounded{ border-radius:9px; }
+  .dot-tile-classy{ border-radius:0; clip-path:polygon(0 0,100% 0,100% 65%,65% 100%,0 100%); }
+  .dot-tile-classy-rounded{ border-radius:5px; clip-path:polygon(0 0,100% 0,100% 65%,65% 100%,0 100%); }
+
+  /* Eye frame preview: hollow ring, shape = corner-square type */
+  .eye-frame{ width:36px; height:36px; border:6px solid currentColor; box-sizing:border-box; display:block; }
+  .eye-frame-square{ border-radius:0; }
+  .eye-frame-extra-rounded{ border-radius:30%; }
+  .eye-frame-dot{ border-radius:50%; }
+
+  /* Eye ball preview: filled center block, shape = corner-dot type */
+  .eye-ball{ width:20px; height:20px; background:currentColor; display:block; }
+  .eye-ball-square{ border-radius:3px; }
+  .eye-ball-dot{ border-radius:50%; }
+
   .upload{ border:1.5px dashed var(--border); border-radius:9px; padding:16px; text-align:center;
     cursor:pointer; color:var(--text-muted); font-size:12.5px; display:block; }
   .upload:hover{ border-color:var(--accent-3); color:var(--accent-3); }
   .upload input{ display:none; }
   .logo-preview{ display:flex; align-items:center; gap:10px; }
+  .logo-preview .logo-thumb{ position:relative; width:32px; height:32px; flex-shrink:0; }
   .logo-preview img{ width:32px; height:32px; border-radius:6px; object-fit:contain; background:#fff; }
   .logo-preview .logo-name{ font-size:12px; color:var(--text-muted); flex:1; }
   .logo-preview button{ background:none; border:1px solid var(--border); color:var(--text-muted);
     border-radius:6px; padding:4px 8px; font-size:11px; cursor:pointer; }
+  .logo-thumb-spinner{
+    position:absolute; inset:-3px; border-radius:8px; border:2px solid transparent;
+    border-top-color:var(--accent); animation:spin .8s linear infinite;
+  }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+
+  .bg-remove-toggle{ width:100%; margin-bottom:12px; padding:9px 12px; justify-content:flex-start; }
+  .bg-remove-toggle span{ flex:1; text-align:left; }
+  .hint-text{
+    display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-muted);
+    margin:8px 0 0;
+  }
+
+  .quick-icon-label{
+    font-family:'JetBrains Mono', monospace; font-size:11px; letter-spacing:.06em;
+    text-transform:uppercase; color:var(--text-muted); margin:18px 0 10px;
+  }
+  .quick-icon-grid{ display:grid; grid-template-columns:repeat(5,1fr); gap:8px; }
+  .quick-icon-opt{
+    border:1px solid var(--border); background:var(--surface-2); border-radius:9px;
+    padding:6px; cursor:pointer; display:flex; align-items:center; justify-content:center;
+  }
+  .quick-icon-opt:hover{ border-color:var(--accent); }
+  .quick-icon-opt img{ width:24px; height:24px; border-radius:6px; display:block; }
 
   .section-title{
     font-family:'JetBrains Mono', monospace; font-size:11px; letter-spacing:.08em;
@@ -1065,10 +1453,11 @@ const styles = `
   .preset-load:hover{ border-color:var(--accent); }
 
   .stage{ display:flex; flex-direction:column; align-items:center; justify-content:center; padding:40px; }
+  .canvas-shell{ position:relative; width:100%; max-width:420px; min-height:420px; display:flex; align-items:center; justify-content:center; }
   .canvas-card{
     border-radius:28px; padding:38px 38px 28px;
     box-shadow: 0 30px 80px -20px rgba(0,0,0,.65);
-    display:flex; flex-direction:column; align-items:center; position:relative;
+    display:flex; flex-direction:column; align-items:center;
   }
   .card-title{ font-weight:700; font-size:18px; color:#141821; margin-top:18px; }
   .card-sub{ font-family:'JetBrains Mono', monospace; font-size:11.5px; color:#8a90a0; margin-top:4px; }
@@ -1082,6 +1471,54 @@ const styles = `
     0%{ top:38px; opacity:0; } 10%{ opacity:1; } 90%{ opacity:1; }
     100%{ top:calc(100% - 100px); opacity:0; }
   }
+
+  /* "Generate to see it" placeholder, shown before the first generation */
+  .qr-placeholder{
+    position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:16px; text-align:center; border:1.5px dashed var(--border); border-radius:28px;
+    background:var(--surface-2); color:var(--text-muted); padding:32px;
+  }
+  .qr-placeholder svg{ color:var(--text-muted); }
+  .qr-placeholder p{ font-size:13px; margin:0; }
+  .generate-btn{ padding:13px 26px; font-size:13px; }
+
+  /* Scanning loader — plays for a beat while the code is "generated" */
+  .qr-scanning{ border-style:solid; border-color:var(--border-strong); }
+  .scan-ring{
+    width:64px; height:64px; border-radius:50%; border:2px solid var(--border-strong);
+    display:flex; align-items:center; justify-content:center; position:relative;
+  }
+  .scan-ring::before{
+    content:''; position:absolute; inset:-2px; border-radius:50%;
+    border:2px solid transparent; border-top-color:var(--accent); border-right-color:var(--accent);
+    animation:spin 1s linear infinite;
+  }
+  .scan-ring-icon{ color:var(--accent); animation:pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse{ 0%,100%{ opacity:.55; } 50%{ opacity:1; } }
+  .scan-status{
+    font-family:'JetBrains Mono', monospace; font-size:12px; color:var(--text); min-height:16px;
+  }
+  .scan-progress{
+    width:180px; height:4px; border-radius:999px; background:var(--border); overflow:hidden;
+  }
+  .scan-progress span{
+    display:block; height:100%; background:var(--accent); border-radius:999px;
+    width:0%; animation:fillbar 3s linear forwards;
+  }
+  @keyframes fillbar{ from{ width:0%; } to{ width:100%; } }
+
+  /* Overlay shown on top of a previously-generated code once the design
+     has changed underneath it, prompting the user to regenerate. */
+  .stale-overlay{
+    position:absolute; inset:0; border-radius:28px;
+    background:rgba(11,13,18,0.72); backdrop-filter:blur(2px);
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px;
+  }
+  .stale-overlay span{
+    font-family:'JetBrains Mono', monospace; font-size:12px; color:#fff;
+    background:rgba(255,255,255,0.1); padding:5px 12px; border-radius:999px;
+  }
+
   .actions{ display:flex; gap:12px; margin-top:28px; }
   .btn{
     font-family:'JetBrains Mono', monospace; font-size:12.5px; border-radius:9px; padding:12px 20px;
@@ -1090,6 +1527,8 @@ const styles = `
   }
   .btn.primary{ background:var(--accent); color:#0b0d12; border-color:var(--accent); font-weight:700; }
   .btn:hover{ border-color:var(--border-strong); }
+  .btn:disabled{ opacity:.4; cursor:not-allowed; }
+  .btn:disabled:hover{ border-color:var(--border); }
   .meta-line{ margin-top:18px; font-family:'JetBrains Mono', monospace; font-size:11px; color:var(--text-muted); display:flex; gap:18px; }
   .meta-line b{ color:var(--accent); font-weight:500; }
 
@@ -1122,6 +1561,7 @@ const styles = `
     .type-grid{ grid-template-columns:repeat(4,1fr); gap:7px; }
     .style-grid{ grid-template-columns:repeat(2,1fr); }
     .canvas-card{ padding:28px 22px 22px; width:100%; max-width:340px; }
+    .canvas-shell{ max-width:340px; min-height:340px; }
     .actions{ flex-direction:column; width:100%; max-width:340px; }
     .actions .btn{ width:100%; justify-content:center; }
     .meta-line{ flex-direction:column; gap:6px; align-items:center; text-align:center; }
