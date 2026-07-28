@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
-import QRCodeStyling from "qr-code-styling";
 import qrcodegen from "qrcode-generator";
 import { useNavigate } from "react-router-dom";
+import { renderQrSvg, svgToPngDataUrl, BODY_SHAPES, EYE_FRAME_SHAPES as EYE_FRAME_SHAPE_DEFS, EYE_BALL_SHAPES as EYE_BALL_SHAPE_DEFS } from "../utils/qrRenderer";
 import {
   LogOut, Download, Save, Trash2, ChevronDown,
   Link2, Type, Wifi, Mail, Phone, MessageSquare, MessageCircle,
@@ -27,43 +27,40 @@ const initialsOf = (name = "") =>
     .join("")
     .toUpperCase() || "?";
 
-// "Body" shape = the shape of each individual data module. These six are
-// every dot type the renderer (qr-code-styling) actually supports — rather
-// than list decorative options it can't draw, each one here is real and
-// live-previewed with the exact same shape logic used in the render below.
-const DOT_STYLES = [
-  { val: "square", label: "Square" },
-  { val: "dots", label: "Dots" },
-  { val: "rounded", label: "Rounded" },
-  { val: "extra-rounded", label: "Extra Round" },
-  { val: "classy", label: "Classy" },
-  { val: "classy-rounded", label: "Classy Round" },
-];
+// "Body" shape = the shape of each individual data module. Backed by our
+// own SVG renderer (src/utils/qrRenderer.js), so every one of these is
+// real and live-previewed with the exact same shape logic used below.
+const DOT_STYLES = BODY_SHAPES;
 
 // "Eye Frame" = the outer ring of the three big position markers.
-const EYE_FRAME_SHAPES = [
-  { val: "square", label: "Square" },
-  { val: "extra-rounded", label: "Rounded" },
-  { val: "dot", label: "Circle" },
-];
+const EYE_FRAME_SHAPES = EYE_FRAME_SHAPE_DEFS;
 
 // "Eye Ball" = the solid inner square of each position marker.
-const EYE_BALL_SHAPES = [
-  { val: "square", label: "Square" },
-  { val: "dot", label: "Circle" },
-];
+const EYE_BALL_SHAPES = EYE_BALL_SHAPE_DEFS;
 
 // Small, generically-drawn (not brand-trademarked) glyphs a user can drop
 // into the center of their QR as a logo with one tap — the same "pick an
 // icon instead of uploading a file" convenience popular QR tools offer,
 // built from scratch here as flat-color rounded tiles.
+//
+// Each entry is either:
+//   { path, ... }  -> a stroked line-art glyph (viewBox "0 0 32 32", unless
+//                      `viewBox`/`transform` override it — used for the
+//                      Lucide-style icons which are drawn on a 24x24 grid)
+//   { inner, ... }  -> raw SVG markup dropped in as-is (used for the
+//                      lettermark / pictogram "platform" icons below)
+// `bg` is "rounded" (default) or "circle".
 const QUICK_LOGO_ICONS = [
   { id: "website", label: "Website", color: "#2563eb",
     path: "M16 6a10 10 0 100 20 10 10 0 000-20zm0 0c-2.8 3-2.8 17 0 20m0-20c2.8 3 2.8 17 0 20M6.6 12h18.8M6.6 20h18.8" },
   { id: "wifi", label: "Wi-Fi", color: "#0891b2",
     path: "M8 14.5a12 12 0 0116 0M11.3 18a7.4 7.4 0 019.4 0M14.6 21.4a2.8 2.8 0 012.8 0" },
-  { id: "phone", label: "Phone", color: "#16a34a",
-    path: "M11 8.2c.3 1.6 1 3.1 2 4.5l1.9-1a1 1 0 011.2.2l2.6 2.9a1 1 0 01-.1 1.4c-3.6 3.2-8.9-.4-11.9-4.9C3.7 6.6 4.2 3 8.5 1.6a1 1 0 011.3.4l1.8 3a1 1 0 01-.1 1.2l-.5 1.9v.1z" },
+  // Same handset silhouette as the lucide-react <Phone> icon used elsewhere
+  // in this file, drawn on its native 24x24 grid and centered in the 32x32
+  // tile with a 4px margin on every side — the previous hand-drawn path was
+  // off-balance within the tile, which is why the glyph looked "pushed up".
+  { id: "phone", label: "Phone", color: "#16a34a", viewBox: "0 0 24 24", transform: "translate(4,4)",
+    path: "M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" },
   { id: "email", label: "Email", color: "#dc2626",
     path: "M7 10h18v13H7zM7 10l9 7 9-7" },
   { id: "calendar", label: "Calendar", color: "#7c3aed",
@@ -78,15 +75,67 @@ const QUICK_LOGO_ICONS = [
     path: "M16 6a10 10 0 100 20 10 10 0 000-20zm0 4.5v11m3-8.6c0-1.3-1.3-2.4-3-2.4s-3 1-3 2.4c0 3 6 1.6 6 4.6 0 1.4-1.3 2.5-3 2.5s-3-1-3-2.4" },
   { id: "star", label: "Rating", color: "#ca8a04",
     path: "M16 5l3.5 7.2 7.9 1.1-5.7 5.6 1.3 7.9L16 22.9l-7 3.9 1.3-7.9-5.7-5.6 7.9-1.1z" },
+
+  // --- Social / platform pictograms -----------------------------------
+  // Generic, self-drawn glyphs that read as "the Facebook icon", "the
+  // YouTube icon" etc. at a small size (a lettermark or simple pictogram),
+  // not traced reproductions of any brand's actual logo artwork.
+  { id: "facebook-box", label: "Facebook", color: "#1877F2", bg: "rounded",
+    inner: `<text x="16" y="22.5" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="700" fill="#fff" text-anchor="middle">f</text>` },
+  { id: "facebook-circle", label: "Facebook", color: "#1877F2", bg: "circle",
+    inner: `<text x="16" y="22.5" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="700" fill="#fff" text-anchor="middle">f</text>` },
+  { id: "twitter", label: "Twitter / X", color: "#0f1419", bg: "rounded",
+    inner: `<text x="16" y="22" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" fill="#fff" text-anchor="middle">X</text>` },
+  { id: "instagram", label: "Instagram", color: "#C13584", bg: "rounded",
+    inner: `<rect x="8" y="8" width="16" height="16" rx="5" fill="none" stroke="#fff" stroke-width="2"/><circle cx="16" cy="16" r="4" fill="none" stroke="#fff" stroke-width="2"/><circle cx="21.5" cy="10.5" r="1.3" fill="#fff"/>` },
+  { id: "youtube", label: "YouTube", color: "#FF0000", bg: "rounded",
+    inner: `<rect x="6" y="10.5" width="20" height="11" rx="3.5" fill="none" stroke="#fff" stroke-width="2"/><path d="M13.5 13.2v5.6l6-2.8z" fill="#fff"/>` },
+  { id: "google-plus", label: "Google+", color: "#DB4437", bg: "rounded",
+    inner: `<text x="15" y="22" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700" fill="#fff" text-anchor="middle">G+</text>` },
+  { id: "linkedin", label: "LinkedIn", color: "#0A66C2", bg: "rounded",
+    inner: `<text x="16" y="21.5" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">in</text>` },
+  { id: "xing", label: "Xing", color: "#026466", bg: "rounded",
+    inner: `<text x="16" y="21.5" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" fill="#fff" text-anchor="middle">X</text>` },
+  { id: "pinterest", label: "Pinterest", color: "#E60023", bg: "circle",
+    inner: `<text x="16" y="22" font-family="Georgia, serif" font-size="17" font-weight="700" fill="#fff" text-anchor="middle">P</text>` },
+  { id: "vimeo", label: "Vimeo", color: "#1AB7EA", bg: "rounded",
+    inner: `<text x="16" y="21" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">V</text>` },
+  { id: "soundcloud", label: "SoundCloud", color: "#FF5500", bg: "rounded",
+    inner: `<path d="M8 21v-6M11 21v-9M14 21v-11M17 21v-9M20 21v-6M23 21v-4" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>` },
+  { id: "vk", label: "VK", color: "#4C75A3", bg: "rounded",
+    inner: `<text x="16" y="21" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="700" fill="#fff" text-anchor="middle">VK</text>` },
+  { id: "whatsapp", label: "WhatsApp", color: "#25D366", bg: "circle",
+    inner: `<path d="M11 20l1.1-3.4a6.5 6.5 0 111.9 1.9z" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"/>` },
+  { id: "app-store", label: "App Store", color: "#0D96F6", bg: "rounded",
+    inner: `<path d="M16 9l6.5 11.3H9.5z" fill="#fff"/>` },
+  { id: "google-play", label: "Google Play", color: "#34A853", bg: "rounded",
+    inner: `<path d="M11 7l14 9-14 9z" fill="#fff"/>` },
+  { id: "gmail-social", label: "Gmail", color: "#EA4335", bg: "rounded",
+    inner: `<rect x="6" y="9" width="20" height="14" rx="2" fill="#fff"/><path d="M6 10l10 8 10-8" fill="none" stroke="#EA4335" stroke-width="2"/>` },
+  { id: "calendar-social", label: "Calendar", color: "#F4B400", bg: "rounded",
+    inner: `<rect x="7" y="8" width="18" height="17" rx="2" fill="none" stroke="#fff" stroke-width="2"/><path d="M7 13h18M11 5v6M21 5v6" stroke="#fff" stroke-width="2" stroke-linecap="round"/>` },
+  { id: "document", label: "Document", color: "#8a90a0", bg: "rounded",
+    inner: `<path d="M10 6h9l5 5v15H10z" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"/><path d="M19 6v5h5" fill="none" stroke="#fff" stroke-width="2"/>` },
+  { id: "wifi-social", label: "Wi-Fi", color: "#00BCD4", bg: "circle",
+    inner: `<path d="M8 14.5a12 12 0 0116 0M11.3 18a7.4 7.4 0 019.4 0M14.6 21.4a2.8 2.8 0 012.8 0" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/>` },
+  { id: "bitcoin", label: "Bitcoin", color: "#F7931A", bg: "circle",
+    inner: `<text x="16" y="22" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" fill="#fff" text-anchor="middle">₿</text>` },
 ];
 
-// Turns one of the glyphs above into a flat-color rounded-square tile and
-// encodes it as an inline SVG data URL — no network round-trip, no file.
+// Turns one of the glyphs above into a flat-color tile (rounded square or
+// circle background) and encodes it as an inline SVG data URL — no network
+// round-trip, no file. Supports both the original stroked-path glyphs and
+// the newer lettermark/pictogram platform icons (via `inner`).
 function quickIconToDataUrl(icon) {
+  const bg = icon.bg === "circle"
+    ? `<circle cx="16" cy="16" r="16" fill="${icon.color}"/>`
+    : `<rect width="32" height="32" rx="8" fill="${icon.color}"/>`;
+  const glyph = icon.inner
+    ? icon.inner
+    : `<path d="${icon.path}" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" transform="${icon.transform || ""}"/>`;
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 32 32">` +
-    `<rect width="32" height="32" rx="8" fill="${icon.color}"/>` +
-    `<path d="${icon.path}" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>` +
+    bg + glyph +
     `</svg>`;
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
@@ -420,27 +469,29 @@ export default function BuilderPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentSignature]);
 
-  // Init QR renderer once.
-  useEffect(() => {
-    qrRef.current = new QRCodeStyling({
-      width: 800,
-      height: 800,
-      type: "canvas",
+  // Builds the current SVG markup from state + qrData. qrRef.current holds
+  // the latest string so downloadPng/downloadSvg don't have to re-render.
+  const buildSvg = useCallback(() => {
+    const svg = renderQrSvg({
       data: qrData || " ",
+      size: 800,
       margin: 20,
-      qrOptions: {
-        errorCorrectionLevel: "H",
-        typeNumber: computeTypeNumber(qrData),
-      },
-      dotsOptions: { color: state.dotColor, type: state.dotType },
-      backgroundOptions: { color: state.bgColor },
-      cornersSquareOptions: { color: state.cornerColor, type: state.cornerSquareType },
-      cornersDotOptions: { color: state.cornerDotColor, type: state.cornerDotType },
-      imageOptions: { crossOrigin: "anonymous", margin: 10, imageSize: 0.32 },
+      typeNumber: computeTypeNumber(qrData),
+      ecLevel: "H",
+      dotType: state.dotType,
+      dotColor: state.dotColor,
+      bgColor: state.bgColor,
+      cornerSquareType: state.cornerSquareType,
+      cornerColor: state.cornerColor,
+      cornerDotType: state.cornerDotType,
+      cornerDotColor: state.cornerDotColor,
+      image: state.logo || null,
+      imageSize: 0.32,
+      imageMargin: 10,
     });
-    if (renderRef.current) qrRef.current.append(renderRef.current);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    qrRef.current = svg;
+    return svg;
+  }, [state, qrData]);
 
   const playScan = useCallback(() => {
     const el = scanLineRef.current;
@@ -451,22 +502,13 @@ export default function BuilderPage() {
     el.classList.add("playing");
   }, []);
 
-  // Keep the renderer in sync with state.
+  // Keep the on-screen preview in sync with state — re-render the SVG and
+  // drop it straight into the preview container.
   useEffect(() => {
-    if (!qrRef.current) return;
-    qrRef.current.update({
-      data: qrData || " ",
-      qrOptions: {
-        errorCorrectionLevel: "H",
-        typeNumber: computeTypeNumber(qrData),
-      },
-      dotsOptions: { color: state.dotColor, type: state.dotType },
-      backgroundOptions: { color: state.bgColor },
-      cornersSquareOptions: { color: state.cornerColor, type: state.cornerSquareType },
-      cornersDotOptions: { color: state.cornerDotColor, type: state.cornerDotType },
-      image: state.logo || undefined,
-    });
+    const svg = buildSvg();
+    if (renderRef.current) renderRef.current.innerHTML = svg;
     playScan();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, qrData, playScan]);
 
   const set = (key) => (e) => setState((s) => ({ ...s, [key]: e.target.value }));
@@ -545,8 +587,7 @@ export default function BuilderPage() {
 
   const downloadPng = async () => {
     if (phase !== "ready") return;
-    const blob = await qrRef.current.getRawData("png");
-    const url = URL.createObjectURL(blob);
+    const pngDataUrl = await svgToPngDataUrl(qrRef.current, 800, 800);
     const img = new Image();
     img.onload = () => {
       const pad = 140;
@@ -587,15 +628,16 @@ export default function BuilderPage() {
         pushToast("PNG downloaded", "success");
       });
     };
-    img.src = url;
+    img.src = pngDataUrl;
   };
 
   const downloadSvg = () => {
-    if (phase !== "ready") return;
-    qrRef.current.download({
-      name: (state.title || "qr-code").replace(/\s+/g, "-").toLowerCase(),
-      extension: "svg",
-    });
+    if (phase !== "ready" || !qrRef.current) return;
+    const blob = new Blob([qrRef.current], { type: "image/svg+xml" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = (state.title || "qr-code").replace(/\s+/g, "-").toLowerCase() + ".svg";
+    a.click();
     pushToast("SVG downloaded", "success");
   };
 
